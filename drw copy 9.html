@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="math.js"></script>
+</head>
+<body>
+
+<canvas id="myCanvas" width="600" height="600"
+style="border:1px solid #c3c3c3;">
+Your browser does not support the canvas element.
+</canvas>
+
+<div id="plot"></div>
+
+<p id="coord"></p>
+
+<script>
+'use strict'
+class Dot{
+	constructor(x, y){
+		if(this.radius == null)
+			this.radius = 3;
+		this.x = x;
+		this.y = y;
+	}
+	drawDot(ctx, dx=0, dy=0, color="#000000"){
+		ctx.beginPath();
+		ctx.arc(this.x + dx, this.y + dy, this.radius, 0, Math.PI*2);
+		ctx.fillStyle = color;
+		ctx.fill();
+	}
+    rotateCenter(angle = 0, cx = 0, cy = 0){
+        if(angle==0)
+            return;
+        var dx = this.x - cx;
+        var dy = this.y - cy;
+        var sinA = Math.sin(angle);
+        var cosA = Math.cos(angle);
+        
+        var rotated_dx = dx * cosA - dy * sinA;
+        var rotated_dy = dx * sinA + dy * cosA;
+        this.x = cx + rotated_dx;
+        this.y = cy + rotated_dy;
+    }
+}
+
+class DotsStorer{
+	constructor(x=0, y=0){
+		if(this.dotArray == null)
+			this.dotArray = [];
+		this.x = x;
+		this.y = y;
+	}
+
+	draw(ctx, color="#000000"){
+        if(this.dotArray.length == 1){
+            this.drawDot(ctx);
+            return;
+        }
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+        ctx.moveTo(this.dotArray[0].x + this.x, this.dotArray[0].y + this.y);
+		
+		var targetX;
+		var targetY;
+		for(var i=0;i<this.dotArray.length;++i){
+			targetX = this.dotArray[i].x + this.x;
+			targetY = this.dotArray[i].y + this.y;
+			ctx.lineTo(targetX, targetY);
+		}
+		ctx.stroke();
+	}
+
+	drawDot(ctx, color="#000000"){
+		for(var i=0;i<this.dotArray.length;++i){
+			this.dotArray[i].drawDot(ctx, this.x, this.y, color);
+		}
+	}
+    
+    rotateCenter(angle = 0, cx, cy){
+        if(angle==0)
+            return;
+        for(var i=0;i<this.dotArray.length;++i){
+            this.dotArray[i].rotateCenter(angle, cx, cy);
+        }
+    }
+    
+    addDotsTo_path2d(path2d){
+        for(var i=0;i<this.dotArray.length;++i){
+            path2d.rect(this.dotArray[i].x, this.dotArray[i].y, 1, 1);
+        }
+    }
+}
+
+//different from lineApproximation
+//y = N[0] + N[1]*x + N[2]*x^2 ..... + N[i]*x^i
+function simplePolynomialFunction_x_to_y(x, N){
+    var y = N[0];
+    var xPower = x;
+    for(var i=1; i<N.length; ++i){
+        y = y + N[i] * xPower;
+        xPower = xPower * x;
+    }
+    return y;
+}
+
+function conicFunction_x_to_y(x, N){
+    //A:0 B:1 C:2 D:3 E:4
+    //Cyy+(Bx+E)y+(Axx+Dx-1)=0
+    var a = N[2];
+    var b = N[1] * x + N[4];
+    var c = N[0] * x * x + N[3] * x - 1;
+    var dd = b*b - 4*a*c;
+    if(a==0){
+        if(b!=0)
+        return (c*(-1)/b);
+        else{
+            if(c!=0)
+            return null;
+            else{
+                var fullOfPoints = new Array(200);
+                for(var i=0;i<200;++i){
+                    fullOfPoints[i] = i-100;
+                }
+                return fullOfPoints;
+            }
+        }
+    }
+    if(dd<0){
+        return null;
+    }
+    else {
+        var d = Math.sqrt(dd);
+        return [(0-b+d)/(2*a), (0-b-d)/(2*a)];
+    }
+}
+
+function distance(dot1, dot2){
+    var dx = dot1.x - dot2.x;
+    var dy = dot1.y - dot2.y;
+    return (Math.sqrt(dx*dx + dy*dy));
+}
+
+function crossProductValue(x1, y1, x2, y2){
+    return ((x1 * y2)-(y1 * x2));
+}
+
+function curvature(dot1, dot2, dot3){
+    var multiplyDistance = distance(dot1,dot2) * distance(dot2,dot3) * distance(dot3,dot1);
+    
+    if(multiplyDistance==0){
+        return Infinity;
+    }
+    
+    var crossProduct = crossProductValue(dot1.x-dot2.x, dot1.y-dot2.y, dot3.x-dot2.x, dot3.y-dot2.y);
+    
+    if(crossProduct<0){
+        //crossProduct = (-1)*crossProduct;
+    }
+    
+    return (crossProduct*2)/multiplyDistance;
+}
+
+
+//input: the Dots near a line
+//return: the coefficients of the approximated line (as an array)
+//y = a[0] + a[1]*x
+function findLine_approximation(dotsArray){
+    if(dotsArray.length < 2)
+        return null;
+    var sigmaX = 0;
+    var sigmaY = 0;
+    var sigmaXX = 0;
+    var sigmaXY = 0;
+    
+    var arrLength = dotsArray.length;
+    for(var i=0;i<arrLength;++i){
+        var x = dotsArray[i].x;
+        var y = dotsArray[i].y;
+        sigmaX = sigmaX + x;
+        sigmaY = sigmaY + y;
+        sigmaXX = sigmaXX + x*x;
+        sigmaXY = sigmaXY + x*y;
+    }
+    var rightSum = [sigmaXY, sigmaY];
+    var sumForCalc = [[sigmaX, sigmaXX], [arrLength, sigmaX]];
+    if(math.det(sumForCalc) == 0){
+        return null;
+        //it might be x = k
+    }
+    
+    return math.multiply( math.inv(sumForCalc), rightSum);
+}
+
+//input: the Dots near a conic
+//return: the coefficients of the approximated conic (as an array)
+//a[0]*(x^2) + a[1]*(x*y) + a[2]*(y^2) + a[3]*x + a[4]*y = 1
+function findConic_approximation(dotsArray){
+    if(dotsArray.length < 5)
+        return null;
+    var sumForCalc = new Array(5);
+    for(var j=0;j<5;++j){
+        sumForCalc[j] = new Array(5);
+        sumForCalc[j].fill(0);
+    }
+    var rightSum = new Array(5);
+    rightSum.fill(0);
+    
+    var arrLength = dotsArray.length;
+    for(var i=0;i<arrLength;++i){
+        var x = dotsArray[i].x;
+        var y = dotsArray[i].y;
+        var inputMatrix = ([x*x, x*y, y*y, x, y]);
+        for(var j=0;j<5;++j){
+            for(var k=0;k<5;++k){
+                (sumForCalc[j])[k] += inputMatrix[j]*inputMatrix[k];
+            }
+            rightSum[j] += inputMatrix[j];
+        }
+    }
+    if(math.det(sumForCalc) == 0){
+        return null;
+        //it might be axx+bxy+cyy+dx+ey=0
+    }
+    
+    return math.multiply( math.inv(sumForCalc), rightSum);
+}
+
+function calcConicDeviation(pointsArray, conic){
+    var deviationSum = 0;
+    
+    for(var i=0;i<pointsArray.length;++i){
+        var x = (pointsArray[i])[0];
+        var y = (pointsArray[i])[1];
+        var nowDeviation =
+            (conic[0]*x*x + conic[1]*x*y + conic[2]*y*y + conic[3]*x + conic[4]*y - 1);
+        deviationSum += nowDeviation * nowDeviation;
+    }
+    return (deviationSum / pointsArray.length);
+}
+
+function plotSimpleMath(ctx, dx, dy, x_to_y, minX, maxX){
+    ctx.fillStyle = "#000000";
+    ctx.globalAlpha = 0.2;
+    ctx.beginPath();
+    
+    var xHalfRange = (maxX - minX)/2;
+    var avg = (maxX + minX)/2;
+    for(var ang = Math.PI;ang>=0; ang-=0.02){
+        var x = Math.cos(ang) * xHalfRange + avg;
+        if(x_to_y(x) == Infinity){
+            continue;
+        }
+        ctx.lineTo(dx + x, dy + x_to_y(x));
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+}
+
+//given the coefficients of a conic function, it calculates the range for x
+//return: [minX, maxX]
+function conicFunction_xLimit(N){
+    //A:0 B:1 C:2 D:3 E:4
+    //Cyy+(Bx+E)y+(Axx+Dx-1)=0
+    //delta(y) = (BB-4AC)xx + (2BE-4CD)x + (EE+4C)
+    var a = N[1]*N[1] - 4*N[0]*N[2];
+    var b = 2*N[1]*N[4] - 4*N[2]*N[3];
+    var c = N[4]*N[4] + 4*N[2];
+    
+    if(a==0){
+        if(b==0){
+            if(c>=0){
+                return [0-Infinity, Infinity];
+            }
+            else
+                return null;
+        }
+        else if(b>0)
+            return [0-c/b, Infinity];
+        else
+            return [0-Infinity, 0-c/b];
+    }
+    
+    var dd = b*b - 4*a*c;
+    
+    if(dd<0){
+        if(a>0)
+            return [0-Infinity, Infinity];
+        else
+            return null;
+    }
+    
+    var d = Math.sqrt(dd);
+    
+    if(a>0){
+        if(dd>0){
+            return [0-Infinity,(0-b-d)/(2*a),(0-b+d)/(2*a),Infinity];
+        }
+        else
+            return [0-Infinity, Infinity];
+    }
+    else{
+        return [(0-b+d)/(2*a),(0-b-d)/(2*a)];
+    }
+}
+
+//Plots the function "x_to_y" to <an array of Dots>.
+// (uses "funcCalcParam" as the parameters for "x_to_y")
+function mathFindDots(x_to_y, min_max_X, funcCalcParam, dx=0, dy=0, angle_cx_cy=[0,0,0]){
+    //an array of Dots
+    var resultDots = [];
+    
+    var xHalfRange = (min_max_X[1] - min_max_X[0])/2;
+    var avg = (min_max_X[1] + min_max_X[0])/2;
+    for(var ang = Math.PI;ang>=0; ang-=0.002){
+        
+        var x = Math.cos(ang) * xHalfRange + avg;
+        var y;
+        
+        if(funcCalcParam == undefined){
+            y = x_to_y(x);
+        }
+        else{
+            y = x_to_y(x, funcCalcParam);
+        }
+        
+        if(y == null || y == Infinity){
+            continue;
+        }
+        else if(y.length == undefined){
+            var newDot = new Dot(dx + x,dy + y);
+            newDot.rotateCenter(angle_cx_cy[0], angle_cx_cy[1], angle_cx_cy[2]);
+            resultDots.push(newDot);
+        }
+        else{
+            for(var i=0;i<y.length;++i){
+                var newDot = new Dot(dx + x,dy + y[i]);
+                newDot.rotateCenter(angle_cx_cy[0], angle_cx_cy[1], angle_cx_cy[2]);
+                resultDots.push(newDot);
+            }
+        }
+    }
+    return resultDots;
+}
+
+//output: a <DotsStorer> object - which plots a conic function according to the parameters.
+function conicFunction_to_DotsStorer(dx, dy, N, canvasWidth = 100, angle_cx_cy = [0,0,0]){var xLimit = conicFunction_xLimit(N);
+    if(xLimit == null){
+        return null;
+    }
+    else if(xLimit.length >= 2){
+        if(xLimit[0] == (0-Infinity))
+            xLimit[0] = (0-canvasWidth);
+        if(xLimit[xLimit.length-1] == Infinity)
+            xLimit[xLimit.length-1] = canvasWidth;
+            
+        var resultDotsStorer = new DotsStorer();
+        for(var i=0;2*i < xLimit.length;++i){
+            resultDotsStorer.dotArray = resultDotsStorer.dotArray.concat( mathFindDots(conicFunction_x_to_y, [xLimit[2*i],xLimit[2*i+1]], N, dx, dy, angle_cx_cy) );
+        }
+    }
+    return resultDotsStorer;
+}
+
+//Translates a <DotsStorer> object, into a <Path2D> object.
+//And then pushes the "drawing information" to the list "globalSave_drawList_info_dxdy",
+//so that the object would be drawn to canvas on each frame.
+function addTo_drawList(resultDotsStorer, info=null ,dx=0, dy=0){
+    var path2d = new Path2D();
+    resultDotsStorer.addDotsTo_path2d(path2d);
+    globalSave_drawList_info_dxdy.push([path2d, info, [dx, dy]]);
+}
+
+var canvas = document.getElementById("myCanvas");
+var ctx = canvas.getContext("2d");
+
+var globalSave_DotsStorers = [];
+var globalSave_drawList_info_dxdy = [];
+
+var isDrawing = false;
+
+canvas.addEventListener("mousedown", function(){
+                        
+    isDrawing = true;
+                        
+    var x = event.clientX - canvas.clientLeft;
+    var y = event.clientY - canvas.clientTop;
+    var coor = "X coords: " + x + ", Y coords: " + y;
+    document.getElementById("coord").innerHTML = coor;
+                        
+    globalSave_DotsStorers.push(new DotsStorer(x, y));
+    globalSave_DotsStorers[globalSave_DotsStorers.length-1].dotArray.push(new Dot(0, 0));
+                        
+});
+
+function finishDrawing(){
+    if(isDrawing == false)
+        return;
+    isDrawing = false;
+    
+    var nowShape = globalSave_DotsStorers[globalSave_DotsStorers.length-1];
+    
+    if(nowShape.dotArray == undefined)
+        return;
+    var nowShape_points = nowShape.dotArray;
+    
+    var ellipse_N =  findConic_approximation(nowShape_points);
+    if(ellipse_N == null)
+        return;
+        
+    var resultDotsStorer =
+        conicFunction_to_DotsStorer(nowShape.x, nowShape.y, ellipse_N, canvas.width);
+    addTo_drawList(resultDotsStorer, ellipse_N);
+    
+    
+    document.getElementById("coord").innerHTML
+        = calcConicDeviation(nowShape_points, ellipse_N);
+}
+canvas.addEventListener("mouseup", finishDrawing);
+canvas.addEventListener("mouseleave", finishDrawing);
+                                                                        
+canvas.addEventListener("mousemove", function(){
+    if(isDrawing == false)
+        return;
+    var x = event.clientX - canvas.clientLeft;
+    var y = event.clientY - canvas.clientTop;
+    var coor = "X coords: " + x + ", Y coords: " + y;
+    document.getElementById("coord").innerHTML = coor;
+                                                                                                
+    var nowDotsStorer = globalSave_DotsStorers[globalSave_DotsStorers.length-1];
+    var lastDot = nowDotsStorer.dotArray[nowDotsStorer.dotArray.length - 1];
+    var newX = x-nowDotsStorer.x;
+    var newY = y-nowDotsStorer.y;
+                                                                                                
+    if(lastDot.x != newX || lastDot.y != newY)
+        nowDotsStorer.dotArray.push(new Dot(newX, newY));
+});
+
+setInterval(frame, 10);
+
+
+function draw(){
+    var canvas = document.getElementById("myCanvas");
+    var ctx = canvas.getContext("2d");
+	ctx.fillStyle = "#FF0000";
+	ctx.fillRect(0,0, canvas.width, canvas.height);
+    
+    var output = document.getElementById("coord").innerHTML;
+    
+	for(var i=0;i<globalSave_DotsStorers.length;++i){
+        globalSave_DotsStorers[i].draw(ctx);
+	}
+    
+    
+    ctx.save();
+    
+    ctx.fillStyle = "blue";
+    for(var i=0;i<globalSave_drawList_info_dxdy.length;++i){
+        var nowPath_info_dxdy = globalSave_drawList_info_dxdy[i];
+        ctx.translate((nowPath_info_dxdy[2])[0], (nowPath_info_dxdy[2])[1]);
+        ctx.fill(nowPath_info_dxdy[0]);
+        ctx.translate(0-(nowPath_info_dxdy[2])[0], 0-(nowPath_info_dxdy[2])[1]);
+    }
+    
+    output ="";
+    if(1==0)
+    for(var i=0;i<globalSave_DotsStorers.length-1;++i){
+        var nowShape = globalSave_DotsStorers[i];
+        if(nowShape.dotArray == undefined)
+            continue;
+            
+        var lineCoefficients = findLine_approximation(nowShape.dotArray);
+        
+        nowShape.drawDot(ctx,"green");
+        
+        var firstDot = new Dot(0,lineCoefficients[0]);
+        var lastDot = new Dot(200,lineCoefficients[0]+200*lineCoefficients[1]);
+        
+        
+        ctx.beginPath();
+        ctx.moveTo(firstDot.x + nowShape.x, firstDot.y + nowShape.y);
+        ctx.lineTo(lastDot.x + nowShape.x, lastDot.y + nowShape.y);
+        ctx.strokeStyle = "white";
+        ctx.stroke();
+        
+        output = output+" ( "+lineCoefficients+" ) ";
+        
+        
+        var angle = Math.atan(lineCoefficients[1]);
+        globalSave_DotsStorers[i].rotateCenter(0-angle, 0, lineCoefficients[0]);
+    }
+  
+    document.getElementById("coord").innerHTML = output;
+}
+
+
+var count = 0;
+var frameRate = 10;
+
+function frame() {
+	for(var i=0;i<frameRate;++i){
+		draw();
+	}
+}
+
+</script>
+
+</body>
+</html>
+
